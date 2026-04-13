@@ -133,6 +133,22 @@ curl "http://localhost:3000/api/classify?name=zxqvbnm"
 
 Deploy to any accepted platform (e.g., Vercel, Railway, Heroku, AWS, PXXL App).
 
+### Vercel (recommended for this repo)
+
+This repo includes a Vercel serverless route at:
+
+- `/api/classify`
+
+Steps:
+
+1. Push this repository to GitHub.
+2. In Vercel, click **New Project** and import this GitHub repo.
+3. Deploy with default settings.
+4. Your live base URL will be:
+  - `https://<your-vercel-project>.vercel.app`
+5. Test endpoint:
+  - `https://<your-vercel-project>.vercel.app/api/classify?name=john`
+
 After deployment, submit:
 
 1. API base URL (for example: `https://your-app.domain.app`)
