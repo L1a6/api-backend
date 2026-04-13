@@ -1,0 +1,17 @@
+{
+  "name": "backend-wizards-stage0",
+  "version": "1.0.0",
+  "description": "Stage 0 API Integration & Data Processing Assessment",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.22.1"
+  }
+}
