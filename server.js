@@ -1,122 +1,105 @@
 const express = require("express");
+const { isApiError } = require("./lib/errors");
+const {
+  createProfile,
+  getProfileById,
+  listProfiles,
+  deleteProfileById
+} = require("./lib/profile-service");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const GENDERIZE_BASE_URL = "https://api.genderize.io";
-const GENDERIZE_TIMEOUT_MS = 5000;
 
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   next();
 });
 
+app.use(express.json());
+
+app.options("*", (req, res) => {
+  res.status(204).end();
+});
+
 app.get("/", (req, res) => {
   res.status(200).json({ status: "success", message: "API is running" });
 });
 
-app.get("/api/classify", async (req, res) => {
+app.post("/api/profiles", async (req, res) => {
   try {
-    const { name } = req.query;
+    const result = await createProfile(req.body);
 
-    if (name === undefined) {
-      return res.status(400).json({
-        status: "error",
-        message: "Missing name query parameter"
+    if (result.alreadyExists) {
+      return res.status(200).json({
+        status: "success",
+        message: "Profile already exists",
+        data: result.profile
       });
     }
 
-    if (typeof name !== "string") {
-      return res.status(422).json({
-        status: "error",
-        message: "name must be a string"
-      });
-    }
+    return res.status(201).json({
+      status: "success",
+      data: result.profile
+    });
+  } catch (error) {
+    return handleErrorResponse(error, res);
+  }
+});
 
-    const trimmedName = name.trim();
-
-    if (!trimmedName) {
-      return res.status(400).json({
-        status: "error",
-        message: "name query parameter cannot be empty"
-      });
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), GENDERIZE_TIMEOUT_MS);
-
-    let upstreamResponse;
-    try {
-      upstreamResponse = await fetch(
-        `${GENDERIZE_BASE_URL}?name=${encodeURIComponent(trimmedName)}`,
-        { signal: controller.signal }
-      );
-    } catch (error) {
-      clearTimeout(timeout);
-      return res.status(502).json({
-        status: "error",
-        message: "Failed to fetch prediction from upstream service"
-      });
-    }
-
-    clearTimeout(timeout);
-
-    if (!upstreamResponse.ok) {
-      return res.status(502).json({
-        status: "error",
-        message: "Upstream service returned an error"
-      });
-    }
-
-    const payload = await upstreamResponse.json();
-
-    const responseName = payload.name;
-    const gender = payload.gender;
-    const probability = payload.probability;
-    const sampleSize = payload.count;
-
-    if (gender === null || sampleSize === 0) {
-      return res.status(422).json({
-        status: "error",
-        message: "No prediction available for the provided name"
-      });
-    }
-
-    if (
-      typeof responseName !== "string" ||
-      typeof gender !== "string" ||
-      typeof probability !== "number" ||
-      typeof sampleSize !== "number"
-    ) {
-      return res.status(502).json({
-        status: "error",
-        message: "Upstream response format was invalid"
-      });
-    }
-
-    const isConfident = probability >= 0.7 && sampleSize >= 100;
+app.get("/api/profiles/:id", async (req, res) => {
+  try {
+    const profile = await getProfileById(req.params.id);
 
     return res.status(200).json({
       status: "success",
-      data: {
-        name: responseName,
-        gender,
-        probability,
-        sample_size: sampleSize,
-        is_confident: isConfident,
-        processed_at: new Date().toISOString()
-      }
+      data: profile
     });
   } catch (error) {
-    return res.status(500).json({
-      status: "error",
-      message: "Internal server error"
+    return handleErrorResponse(error, res);
+  }
+});
+
+app.get("/api/profiles", async (req, res) => {
+  try {
+    const profiles = await listProfiles(req.query);
+
+    return res.status(200).json({
+      status: "success",
+      count: profiles.length,
+      data: profiles
     });
+  } catch (error) {
+    return handleErrorResponse(error, res);
+  }
+});
+
+app.delete("/api/profiles/:id", async (req, res) => {
+  try {
+    await deleteProfileById(req.params.id);
+    return res.status(204).end();
+  } catch (error) {
+    return handleErrorResponse(error, res);
   }
 });
 
 app.use((req, res) => {
   res.status(404).json({ status: "error", message: "Route not found" });
 });
+
+function handleErrorResponse(error, res) {
+  if (isApiError(error)) {
+    return res.status(error.statusCode).json({
+      status: "error",
+      message: error.message
+    });
+  }
+
+  console.error(error);
+  return res.status(500).json({
+    status: "error",
+    message: "Internal server error"
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
