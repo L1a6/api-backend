@@ -1,37 +1,29 @@
-const { isApiError, ApiError } = require("../../lib/errors");
+const { isApiError, ApiError } = require("../lib/errors");
 const {
   createProfile,
   getProfileById,
   listProfiles,
   deleteProfileById
-} = require("../../lib/profile-service");
+} = require("../lib/profile-service");
 
-function getPathSegments(query) {
-  const id = query && query.id;
+function getSingleProfileId(req) {
+  const fromRewrite = req.query && req.query.profile_id;
 
-  if (id === undefined) {
-    return [];
+  if (fromRewrite === undefined) {
+    return null;
   }
 
-  if (Array.isArray(id)) {
-    return id;
+  if (Array.isArray(fromRewrite) || typeof fromRewrite !== "string") {
+    throw new ApiError(422, "Invalid type");
   }
 
-  if (typeof id === "string") {
-    return [id];
-  }
-
-  throw new ApiError(422, "Invalid type");
-}
-
-function getSingleIdOrThrow(segments) {
-  if (segments.length !== 1) {
-    throw new ApiError(404, "Route not found");
-  }
-
-  const id = segments[0].trim();
+  const id = fromRewrite.trim();
   if (!id) {
     throw new ApiError(422, "Invalid type");
+  }
+
+  if (id.includes("/")) {
+    throw new ApiError(404, "Route not found");
   }
 
   return id;
@@ -45,9 +37,9 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const segments = getPathSegments(req.query || {});
+    const profileId = getSingleProfileId(req);
 
-    if (segments.length === 0) {
+    if (profileId === null) {
       if (req.method === "POST") {
         const result = await createProfile(req.body);
 
@@ -81,10 +73,8 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    const id = getSingleIdOrThrow(segments);
-
     if (req.method === "GET") {
-      const profile = await getProfileById(id);
+      const profile = await getProfileById(profileId);
 
       return res.status(200).json({
         status: "success",
@@ -93,7 +83,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (req.method === "DELETE") {
-      await deleteProfileById(id);
+      await deleteProfileById(profileId);
       return res.status(204).end();
     }
 
