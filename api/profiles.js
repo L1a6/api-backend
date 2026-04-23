@@ -3,9 +3,20 @@ const {
   createProfile,
   getProfileById,
   listProfiles,
+  searchProfiles,
   deleteProfileById
 } = require("../lib/profile-service");
 
+/**
+ * Extract and validate the profile_id rewrite param.
+ *
+ * Returns:
+ *   null       — no profile_id (collection-level request)
+ *   "search"   — NLP search endpoint
+ *   string     — a real profile ID
+ *
+ * Throws ApiError on invalid input.
+ */
 function getSingleProfileId(req) {
   const fromRewrite = req.query && req.query.profile_id;
 
@@ -18,6 +29,7 @@ function getSingleProfileId(req) {
   }
 
   const id = fromRewrite.trim();
+
   if (!id) {
     throw new ApiError(422, "Invalid type");
   }
@@ -39,6 +51,7 @@ module.exports = async function handler(req, res) {
   try {
     const profileId = getSingleProfileId(req);
 
+    // ── Collection-level requests (/api/profiles with no profile_id) ───────────
     if (profileId === null) {
       if (req.method === "POST") {
         const result = await createProfile(req.body);
@@ -58,12 +71,14 @@ module.exports = async function handler(req, res) {
       }
 
       if (req.method === "GET") {
-        const profiles = await listProfiles(req.query || {});
+        const result = await listProfiles(req.query);
 
         return res.status(200).json({
           status: "success",
-          count: profiles.length,
-          data: profiles
+          page: result.page,
+          limit: result.limit,
+          total: result.total,
+          data: result.profiles
         });
       }
 
@@ -73,6 +88,28 @@ module.exports = async function handler(req, res) {
       });
     }
 
+    // ── NLP search endpoint (/api/profiles/search) ─────────────────────────────
+    // Vercel rewrites /api/profiles/search → /api/profiles?profile_id=search
+    if (profileId === "search") {
+      if (req.method !== "GET") {
+        return res.status(405).json({
+          status: "error",
+          message: "Method not allowed"
+        });
+      }
+
+      const result = await searchProfiles(req.query);
+
+      return res.status(200).json({
+        status: "success",
+        page: result.page,
+        limit: result.limit,
+        total: result.total,
+        data: result.profiles
+      });
+    }
+
+    // ── Single profile requests (/api/profiles/:id) ────────────────────────────
     if (req.method === "GET") {
       const profile = await getProfileById(profileId);
 
