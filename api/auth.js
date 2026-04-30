@@ -35,20 +35,6 @@ module.exports = async function handler(req, res) {
 
   try {
     const path = normalizePath(req.query && req.query.path);
-    const clientKey = getClientKey(req);
-    const rateKey = `${req.method}:${path || req.url.split("?")[0]}`;
-    const limitResult = rateLimit({
-      key: `auth:${clientKey}:${rateKey}`,
-      limit: 10,
-      windowMs: 60 * 1000
-    });
-
-    if (!limitResult.allowed) {
-      return res.status(429).json({
-        status: "error",
-        message: "Too many requests"
-      });
-    }
 
     if (path === "github" && req.method !== "GET") {
       return methodNotAllowed(res);
@@ -135,6 +121,25 @@ function methodNotAllowed(res) {
   });
 }
 
+function ensureRateLimit(req, res, scope) {
+  const clientKey = getClientKey(req);
+  const rateKey = `${req.method}:${scope}`;
+  const limitResult = rateLimit({
+    key: `auth:${clientKey}:${rateKey}`,
+    limit: 10,
+    windowMs: 60 * 1000
+  });
+
+  if (!limitResult.allowed) {
+    return res.status(429).json({
+      status: "error",
+      message: "Too many requests"
+    });
+  }
+
+  return null;
+}
+
 function getClientKey(req) {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string" && forwarded.trim()) {
@@ -173,9 +178,9 @@ function requireEnv(name) {
 function normalizePath(pathParam) {
   if (!pathParam) return "";
   if (Array.isArray(pathParam)) {
-    return pathParam.join("/");
+    return pathParam.join("/").replace(/^\/+|\/+$/g, "");
   }
-  return String(pathParam);
+  return String(pathParam).replace(/^\/+|\/+$/g, "");
 }
 
 function getSingleQueryParam(value) {
@@ -260,8 +265,6 @@ function parseCookies(cookieHeader) {
 }
 
 async function handleGithubAuth(req, res) {
-  const clientId = requireEnv("GITHUB_CLIENT_ID");
-
   const stateParam = getSingleQueryParam(req.query.state);
   const codeChallenge = getSingleQueryParam(req.query.code_challenge);
   const redirectUri = getSingleQueryParam(req.query.redirect_uri);
@@ -272,6 +275,11 @@ async function handleGithubAuth(req, res) {
     }
 
     validateLoopbackRedirect(redirectUri);
+    if (ensureRateLimit(req, res, "github")) {
+      return;
+    }
+
+    const clientId = requireEnv("GITHUB_CLIENT_ID");
     await cleanupOAuthStates();
     await storeOAuthState(stateParam, codeChallenge, redirectUri);
 
@@ -287,6 +295,11 @@ async function handleGithubAuth(req, res) {
     return res.end();
   }
 
+  if (ensureRateLimit(req, res, "github")) {
+    return;
+  }
+
+  const clientId = requireEnv("GITHUB_CLIENT_ID");
   const verifier = crypto.randomBytes(32).toString("base64url");
   const challenge = crypto
     .createHash("sha256")
@@ -325,9 +338,6 @@ async function handleGithubAuth(req, res) {
 }
 
 async function handleGithubCallback(req, res) {
-  const clientId = requireEnv("GITHUB_CLIENT_ID");
-  const clientSecret = requireEnv("GITHUB_CLIENT_SECRET");
-
   const code = requireQueryParam(req.query.code, "Missing OAuth code");
   const state = requireQueryParam(req.query.state, "Missing OAuth state");
   const cookies = parseCookies(req.headers.cookie);
@@ -378,6 +388,13 @@ async function handleGithubCallback(req, res) {
       throw new ApiError(401, "Invalid code verifier");
     }
   }
+
+  if (ensureRateLimit(req, res, "github/callback")) {
+    return;
+  }
+
+  const clientId = requireEnv("GITHUB_CLIENT_ID");
+  const clientSecret = requireEnv("GITHUB_CLIENT_SECRET");
 
   const accessToken = await exchangeGithubCode({
     clientId,
@@ -441,6 +458,10 @@ async function handleRefresh(req, res) {
     }
   }
 
+  if (ensureRateLimit(req, res, "refresh")) {
+    return;
+  }
+
   const tokens = await rotateRefreshToken(refreshToken);
 
   if (cookies.refresh_token) {
@@ -470,6 +491,10 @@ async function handleLogout(req, res) {
     if (!csrfHeader || csrfHeader !== cookies.csrf_token) {
       throw new ApiError(403, "Invalid CSRF token");
     }
+  }
+
+  if (ensureRateLimit(req, res, "logout")) {
+    return;
   }
 
   await revokeRefreshToken(refreshToken);
