@@ -25,6 +25,11 @@ const {
   fetchGithubUser,
   fetchGithubEmail
 } = require("./lib/oauth");
+const {
+  storeCliState,
+  consumeCliState,
+  cleanupCliState
+} = require("./lib/cli-state");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -311,6 +316,11 @@ app.get("/auth/github", async (req, res) => {
       }
 
       validateLoopbackRedirect(redirectUri);
+      cleanupCliState();
+      storeCliState(stateParam, {
+        codeChallenge,
+        redirectUri
+      });
 
       const url = buildGithubAuthorizeUrl({
         clientId,
@@ -361,7 +371,7 @@ app.get("/auth/github/callback", async (req, res) => {
     const clientSecret = requireEnv("GITHUB_CLIENT_SECRET");
 
     const code = requireQueryParam(req.query.code, "Missing OAuth code");
-    const state = getSingleQueryParam(req.query.state);
+    const state = requireQueryParam(req.query.state, "Missing OAuth state");
     const oauthState = req.cookies && req.cookies.oauth_state;
     const oauthVerifier = req.cookies && req.cookies.oauth_verifier;
 
@@ -370,7 +380,7 @@ app.get("/auth/github/callback", async (req, res) => {
     let isWebFlow = false;
 
     if (oauthState || oauthVerifier) {
-      if (!state || state !== oauthState) {
+      if (state !== oauthState) {
         throw new ApiError(401, "Invalid OAuth state");
       }
       if (!oauthVerifier) {
@@ -390,6 +400,24 @@ app.get("/auth/github/callback", async (req, res) => {
         "Missing redirect URI"
       );
       validateLoopbackRedirect(redirectUri);
+
+      const cliState = consumeCliState(state);
+      if (!cliState) {
+        throw new ApiError(401, "Invalid OAuth state");
+      }
+
+      if (cliState.redirectUri !== redirectUri) {
+        throw new ApiError(401, "Invalid OAuth state");
+      }
+
+      const computedChallenge = crypto
+        .createHash("sha256")
+        .update(codeVerifier)
+        .digest("base64url");
+
+      if (computedChallenge !== cliState.codeChallenge) {
+        throw new ApiError(401, "Invalid code verifier");
+      }
     }
 
     const accessToken = await exchangeGithubCode({
@@ -499,6 +527,19 @@ app.post("/auth/logout", async (req, res) => {
 });
 
 app.use("/api", authenticateAccessToken, requireCsrfForCookieAuth, apiLimiter);
+
+app.get("/api/users/me", authenticateAccessToken, (req, res) => {
+  return res.status(200).json({
+    status: "success",
+    data: {
+      id: req.user.id,
+      username: req.user.username,
+      role: req.user.role,
+      email: req.user.email,
+      avatar_url: req.user.avatar_url
+    }
+  });
+});
 
 const profilesRouter = express.Router();
 profilesRouter.use(requireApiVersion);

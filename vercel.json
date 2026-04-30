@@ -1,6 +1,14 @@
 {
   "rewrites": [
     {
+      "source": "/auth/:path*",
+      "destination": "/api/auth?path=:path*"
+    },
+    {
+      "source": "/api/users/:user_id",
+      "destination": "/api/users?user_id=:user_id"
+    },
+    {
       "source": "/api/profiles/:profile_id",
       "destination": "/api/profiles?profile_id=:profile_id"
     },

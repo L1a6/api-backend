@@ -8,6 +8,7 @@ const {
   deleteProfileById
 } = require("../lib/profile-service");
 const { verifyAccessToken } = require("../lib/auth");
+const { rateLimit } = require("../lib/rate-limit");
 
 /**
  * Extract and validate the profile_id rewrite param.
@@ -44,6 +45,7 @@ function getSingleProfileId(req) {
 }
 
 module.exports = async function handler(req, res) {
+  const start = Date.now();
   res.setHeader("Access-Control-Allow-Origin", "*");
 
   if (req.method === "OPTIONS") {
@@ -51,6 +53,18 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    const limitResult = rateLimit({
+      key: `profiles:${req.headers.authorization || req.headers.cookie || req.ip}`,
+      limit: 60,
+      windowMs: 60 * 1000
+    });
+
+    if (!limitResult.allowed) {
+      return res.status(429).json({
+        status: "error",
+        message: "Too many requests"
+      });
+    }
     const apiVersion = req.headers["x-api-version"];
     if (!apiVersion || apiVersion !== "1") {
       return res.status(400).json({
@@ -230,6 +244,9 @@ module.exports = async function handler(req, res) {
       status: "error",
       message: "Internal server error"
     });
+  } finally {
+    const duration = Date.now() - start;
+    console.log(`${req.method} ${req.url} ${res.statusCode} ${duration}ms`);
   }
 };
 
