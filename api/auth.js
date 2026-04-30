@@ -14,10 +14,10 @@ const {
   fetchGithubEmail
 } = require("../lib/oauth");
 const {
-  storeCliState,
-  consumeCliState,
-  cleanupCliState
-} = require("../lib/cli-state");
+  storeOAuthState,
+  consumeOAuthState,
+  cleanupOAuthStates
+} = require("../lib/oauth-state");
 const { rateLimit } = require("../lib/rate-limit");
 
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
@@ -28,6 +28,7 @@ module.exports = async function handler(req, res) {
   const start = Date.now();
 
   try {
+    const path = normalizePath(req.query && req.query.path);
     const rateKey = `${req.method}:${req.url.split("?")[0]}`;
     const limitResult = rateLimit({
       key: `auth:${rateKey}`,
@@ -42,27 +43,23 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    if (req.method === "GET" && req.query && req.query.path === "github") {
+    if (req.method === "GET" && path === "github") {
       return handleGithubAuth(req, res);
     }
 
-    if (
-      req.method === "GET" &&
-      req.query &&
-      req.query.path === "github/callback"
-    ) {
+    if (req.method === "GET" && path === "github/callback") {
       return handleGithubCallback(req, res);
     }
 
-    if (req.method === "POST" && req.query && req.query.path === "refresh") {
+    if (req.method === "POST" && path === "refresh") {
       return handleRefresh(req, res);
     }
 
-    if (req.method === "POST" && req.query && req.query.path === "logout") {
+    if (req.method === "POST" && path === "logout") {
       return handleLogout(req, res);
     }
 
-    if (req.method === "GET" && req.query && req.query.path === "me") {
+    if (req.method === "GET" && path === "me") {
       return handleMe(req, res);
     }
 
@@ -92,6 +89,14 @@ function requireEnv(name) {
     throw new ApiError(500, `${name} is not configured`);
   }
   return value.trim();
+}
+
+function normalizePath(pathParam) {
+  if (!pathParam) return "";
+  if (Array.isArray(pathParam)) {
+    return pathParam.join("/");
+  }
+  return String(pathParam);
 }
 
 function getSingleQueryParam(value) {
@@ -188,8 +193,8 @@ async function handleGithubAuth(req, res) {
     }
 
     validateLoopbackRedirect(redirectUri);
-    cleanupCliState();
-    storeCliState(stateParam, { codeChallenge, redirectUri });
+    await cleanupOAuthStates();
+    await storeOAuthState(stateParam, codeChallenge, redirectUri);
 
     const url = buildGithubAuthorizeUrl({
       clientId,
@@ -227,7 +232,7 @@ async function handleGithubAuth(req, res) {
     })
   ]);
 
-  const callbackUrl = `${PUBLIC_BASE_URL}/auth/github/callback`;
+  const callbackUrl = `${resolvePublicBaseUrl(req)}/auth/github/callback`;
   const url = buildGithubAuthorizeUrl({
     clientId,
     redirectUri: callbackUrl,
@@ -263,7 +268,7 @@ async function handleGithubCallback(req, res) {
     }
 
     codeVerifier = oauthVerifier;
-    redirectUri = `${PUBLIC_BASE_URL}/auth/github/callback`;
+    redirectUri = `${resolvePublicBaseUrl(req)}/auth/github/callback`;
     isWebFlow = true;
   } else {
     codeVerifier = requireQueryParam(
@@ -276,12 +281,12 @@ async function handleGithubCallback(req, res) {
     );
     validateLoopbackRedirect(redirectUri);
 
-    const cliState = consumeCliState(state);
-    if (!cliState) {
+    const oauthState = await consumeOAuthState(state);
+    if (!oauthState) {
       throw new ApiError(401, "Invalid OAuth state");
     }
 
-    if (cliState.redirectUri !== redirectUri) {
+    if (oauthState.redirect_uri !== redirectUri) {
       throw new ApiError(401, "Invalid OAuth state");
     }
 
@@ -290,7 +295,7 @@ async function handleGithubCallback(req, res) {
       .update(codeVerifier)
       .digest("base64url");
 
-    if (computedChallenge !== cliState.codeChallenge) {
+    if (computedChallenge !== oauthState.code_challenge) {
       throw new ApiError(401, "Invalid code verifier");
     }
   }
@@ -427,6 +432,20 @@ function extractAccessToken(req) {
   }
 
   return null;
+}
+
+function resolvePublicBaseUrl(req) {
+  if (PUBLIC_BASE_URL && PUBLIC_BASE_URL.trim()) {
+    return PUBLIC_BASE_URL.trim().replace(/\/$/, "");
+  }
+
+  const proto = req.headers["x-forwarded-proto"] || "http";
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  if (host) {
+    return `${proto}://${host}`;
+  }
+
+  return "http://localhost:3000";
 }
 
 function readJsonBody(req) {

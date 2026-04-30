@@ -79,6 +79,9 @@ A Node.js/Express REST API for querying demographic profile data. Supports advan
 - `admin` can create and delete profiles.
 - `analyst` is read-only (list/search/get/export).
 - `is_active = false` returns **403** for all requests.
+- Admin role assignment:
+  - First user becomes `admin` if no admins exist.
+  - Or set `ADMIN_GITHUB_USERNAMES` / `ADMIN_GITHUB_IDS` env vars.
 
 ---
 

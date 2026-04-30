@@ -26,15 +26,14 @@ const {
   fetchGithubEmail
 } = require("./lib/oauth");
 const {
-  storeCliState,
-  consumeCliState,
-  cleanupCliState
-} = require("./lib/cli-state");
+  storeOAuthState,
+  consumeOAuthState,
+  cleanupOAuthStates
+} = require("./lib/oauth-state");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const PUBLIC_BASE_URL =
-  process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`;
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "";
 const WEB_APP_URL = process.env.WEB_APP_URL || "";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
@@ -125,6 +124,20 @@ function requireEnv(name) {
     throw new ApiError(500, `${name} is not configured`);
   }
   return value.trim();
+}
+
+function resolvePublicBaseUrl(req) {
+  if (PUBLIC_BASE_URL && PUBLIC_BASE_URL.trim()) {
+    return PUBLIC_BASE_URL.trim().replace(/\/$/, "");
+  }
+
+  const proto = req.headers["x-forwarded-proto"] || "http";
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  if (host) {
+    return `${proto}://${host}`;
+  }
+
+  return `http://localhost:${PORT}`;
 }
 
 function validateLoopbackRedirect(redirectUri) {
@@ -316,11 +329,8 @@ app.get("/auth/github", async (req, res) => {
       }
 
       validateLoopbackRedirect(redirectUri);
-      cleanupCliState();
-      storeCliState(stateParam, {
-        codeChallenge,
-        redirectUri
-      });
+      await cleanupOAuthStates();
+      await storeOAuthState(stateParam, codeChallenge, redirectUri);
 
       const url = buildGithubAuthorizeUrl({
         clientId,
@@ -351,7 +361,7 @@ app.get("/auth/github", async (req, res) => {
       path: "/"
     });
 
-    const callbackUrl = `${PUBLIC_BASE_URL}/auth/github/callback`;
+    const callbackUrl = `${resolvePublicBaseUrl(req)}/auth/github/callback`;
     const url = buildGithubAuthorizeUrl({
       clientId,
       redirectUri: callbackUrl,
@@ -388,7 +398,7 @@ app.get("/auth/github/callback", async (req, res) => {
       }
 
       codeVerifier = oauthVerifier;
-      redirectUri = `${PUBLIC_BASE_URL}/auth/github/callback`;
+      redirectUri = `${resolvePublicBaseUrl(req)}/auth/github/callback`;
       isWebFlow = true;
     } else {
       codeVerifier = requireQueryParam(
@@ -401,12 +411,12 @@ app.get("/auth/github/callback", async (req, res) => {
       );
       validateLoopbackRedirect(redirectUri);
 
-      const cliState = consumeCliState(state);
-      if (!cliState) {
+      const oauthState = await consumeOAuthState(state);
+      if (!oauthState) {
         throw new ApiError(401, "Invalid OAuth state");
       }
 
-      if (cliState.redirectUri !== redirectUri) {
+      if (oauthState.redirect_uri !== redirectUri) {
         throw new ApiError(401, "Invalid OAuth state");
       }
 
@@ -415,7 +425,7 @@ app.get("/auth/github/callback", async (req, res) => {
         .update(codeVerifier)
         .digest("base64url");
 
-      if (computedChallenge !== cliState.codeChallenge) {
+      if (computedChallenge !== oauthState.code_challenge) {
         throw new ApiError(401, "Invalid code verifier");
       }
     }
