@@ -27,6 +27,12 @@ const IS_PRODUCTION = process.env.NODE_ENV === "production";
 module.exports = async function handler(req, res) {
   const start = Date.now();
 
+  applyCors(req, res);
+  if (req.method === "OPTIONS") {
+    res.statusCode = 204;
+    return res.end();
+  }
+
   try {
     const path = normalizePath(req.query && req.query.path);
     const rateKey = `${req.method}:${req.url.split("?")[0]}`;
@@ -41,6 +47,26 @@ module.exports = async function handler(req, res) {
         status: "error",
         message: "Too many requests"
       });
+    }
+
+    if (path === "github" && req.method !== "GET") {
+      return methodNotAllowed(res);
+    }
+
+    if (path === "github/callback" && req.method !== "GET") {
+      return methodNotAllowed(res);
+    }
+
+    if (path === "refresh" && req.method !== "POST") {
+      return methodNotAllowed(res);
+    }
+
+    if (path === "logout" && req.method !== "POST") {
+      return methodNotAllowed(res);
+    }
+
+    if (path === "me" && req.method !== "GET") {
+      return methodNotAllowed(res);
     }
 
     if (req.method === "GET" && path === "github") {
@@ -82,6 +108,31 @@ module.exports = async function handler(req, res) {
     console.log(`${req.method} ${req.url} ${res.statusCode} ${duration}ms`);
   }
 };
+
+function applyCors(req, res) {
+  const origin = req.headers.origin;
+  const allowedOrigin = WEB_APP_URL && WEB_APP_URL.trim();
+
+  if (origin && allowedOrigin && origin === allowedOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
+
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization, X-API-Version, X-CSRF-Token, X-Client"
+  );
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+}
+
+function methodNotAllowed(res) {
+  return res.status(405).json({
+    status: "error",
+    message: "Method not allowed"
+  });
+}
 
 function requireEnv(name) {
   const value = process.env[name];
