@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "check": "node -e \"console.log('backend check')\""
   },
   "engines": {
     "node": ">=18"
