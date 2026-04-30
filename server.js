@@ -651,3 +651,16 @@ function handleErrorResponse(error, res) {
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
+
+app.get("/auth/me", authenticateAccessToken, async (req, res) => {
+  return res.status(200).json({
+    status: "success",
+    data: {
+      id: req.user.id,
+      username: req.user.username,
+      role: req.user.role,
+      email: req.user.email,
+      avatar_url: req.user.avatar_url
+    }
+  });
+});

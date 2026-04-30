@@ -242,11 +242,27 @@ function extractAccessToken(req) {
     }
   }
 
-  if (req.cookies && req.cookies.access_token) {
-    return req.cookies.access_token;
+  const cookies = parseCookies(req.headers.cookie);
+  if (cookies.access_token) {
+    return cookies.access_token;
   }
 
   return null;
+}
+
+function parseCookies(cookieHeader) {
+  const cookies = {};
+  if (!cookieHeader) {
+    return cookies;
+  }
+
+  cookieHeader.split(";").forEach((part) => {
+    const [key, ...rest] = part.trim().split("=");
+    if (!key) return;
+    cookies[key] = decodeURIComponent(rest.join("="));
+  });
+
+  return cookies;
 }
 
 function getSingleQueryParam(value) {
