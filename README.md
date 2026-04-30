@@ -6,12 +6,102 @@ A Node.js/Express REST API for querying demographic profile data. Supports advan
 
 ## Table of Contents
 
-1. [Getting Started](#getting-started)
-2. [Seeding the Database](#seeding-the-database)
-3. [API Endpoints](#api-endpoints)
-4. [Natural Language Search — Parsing Approach](#natural-language-search--parsing-approach)
-5. [Limitations & Edge Cases](#limitations--edge-cases)
-6. [Deployment](#deployment)
+1. [System Architecture](#system-architecture)
+2. [Authentication Flow](#authentication-flow)
+3. [Token Handling Approach](#token-handling-approach)
+4. [Role Enforcement Logic](#role-enforcement-logic)
+5. [CLI Usage](#cli-usage)
+6. [Getting Started](#getting-started)
+7. [Seeding the Database](#seeding-the-database)
+8. [API Endpoints](#api-endpoints)
+9. [API Versioning & Pagination](#api-versioning--pagination)
+10. [CSV Export](#csv-export)
+11. [Rate Limiting & Logging](#rate-limiting--logging)
+12. [Natural Language Search — Parsing Approach](#natural-language-search--parsing-approach)
+13. [Limitations & Edge Cases](#limitations--edge-cases)
+14. [Deployment](#deployment)
+
+---
+
+## System Architecture
+
+**Components**
+
+- Backend API (this repo): Express + SQLite, OAuth, RBAC, profile intelligence
+- CLI: global `insighta` command that authenticates and calls the API
+- Web portal: browser UI for analysts and admins
+
+**Data flow**
+
+- Both CLI and web portal call the same backend API.
+- The backend stores profiles and user records in SQLite.
+- Tokens are issued by the backend and validated on every `/api/*` request.
+
+---
+
+## Authentication Flow
+
+### CLI (PKCE)
+
+1. CLI generates `state`, `code_verifier`, and `code_challenge`.
+2. CLI opens `GET /auth/github?state=...&code_challenge=...&redirect_uri=http://localhost:<port>/callback`.
+3. User signs in with GitHub.
+4. GitHub redirects to the local CLI callback server with `code` and `state`.
+5. CLI validates `state`, then calls `GET /auth/github/callback?code=...&code_verifier=...&redirect_uri=http://localhost:<port>/callback`.
+6. Backend exchanges the code with GitHub and returns `access_token` + `refresh_token`.
+7. CLI stores credentials in `~/.insighta/credentials.json`.
+
+### Web Portal (PKCE + Cookies)
+
+1. User clicks **Continue with GitHub** → browser calls `GET /auth/github`.
+2. Backend generates PKCE verifier/challenge and stores verifier in an HTTP-only cookie.
+3. GitHub redirects back to `GET /auth/github/callback`.
+4. Backend exchanges the code, creates/updates the user, and sets HTTP-only cookies:
+  - `access_token`
+  - `refresh_token`
+5. A separate `csrf_token` cookie is set for CSRF protection on write requests.
+
+---
+
+## Token Handling Approach
+
+- **Access token**: JWT, expires in 3 minutes.
+- **Refresh token**: opaque, expires in 5 minutes.
+- Refresh tokens are stored hashed in the database and **rotated on every refresh**.
+- Old refresh tokens are revoked immediately after use.
+- Web portal uses HTTP-only cookies; CLI uses JSON responses and local storage.
+
+---
+
+## Role Enforcement Logic
+
+- Every `/api/*` endpoint requires authentication.
+- `admin` can create and delete profiles.
+- `analyst` is read-only (list/search/get/export).
+- `is_active = false` returns **403** for all requests.
+
+---
+
+## CLI Usage
+
+The CLI lives in a separate repository and uses the backend API.
+
+```
+insighta login
+insighta logout
+insighta whoami
+
+insighta profiles list --gender male
+insighta profiles list --country NG --age-group adult
+insighta profiles list --min-age 25 --max-age 40
+insighta profiles list --sort-by age --order desc
+insighta profiles list --page 2 --limit 20
+
+insighta profiles get <id>
+insighta profiles search "young males from nigeria"
+insighta profiles create --name "Harriet Tubman"
+insighta profiles export --format csv
+```
 
 ---
 
@@ -42,6 +132,13 @@ The server starts on port `3000` by default. Override with `PORT=<n>`.
 |----------|-------------|---------|
 | `PORT` | HTTP port for Express server | `3000` |
 | `DB_PATH` | Override SQLite file location | `data/profiles.db` |
+| `PUBLIC_BASE_URL` | Public base URL for OAuth callbacks | `http://localhost:3000` |
+| `WEB_APP_URL` | Web portal origin for OAuth redirects | *(required for web auth)* |
+| `GITHUB_CLIENT_ID` | GitHub OAuth app client ID | *(required)* |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth app client secret | *(required)* |
+| `ACCESS_TOKEN_SECRET` | JWT signing secret | *(required)* |
+| `ACCESS_TOKEN_TTL_SECONDS` | Access token expiry in seconds | `180` |
+| `REFRESH_TOKEN_TTL_SECONDS` | Refresh token expiry in seconds | `300` |
 
 ---
 
@@ -71,6 +168,22 @@ All error responses follow the structure:
 ```json
 { "status": "error", "message": "<description>" }
 ```
+
+All `/api/*` routes require authentication via:
+
+- `Authorization: Bearer <access_token>` (CLI)
+- HTTP-only `access_token` cookie (web portal)
+
+Requests must include `X-API-Version: 1` or they are rejected with `400`.
+
+---
+
+### Authentication
+
+- `GET /auth/github` — start OAuth (web or CLI)
+- `GET /auth/github/callback` — finish OAuth and issue tokens
+- `POST /auth/refresh` — rotate refresh token
+- `POST /auth/logout` — revoke refresh token
 
 ---
 
@@ -126,6 +239,57 @@ GET /api/profiles?gender=male&country_id=NG&min_age=25&sort_by=age&order=desc&pa
   ]
 }
 ```
+
+---
+
+## API Versioning & Pagination
+
+Every profile endpoint requires the header:
+
+```
+X-API-Version: 1
+```
+
+Paginated responses return the updated shape:
+
+```json
+{
+  "status": "success",
+  "page": 1,
+  "limit": 10,
+  "total": 2026,
+  "total_pages": 203,
+  "links": {
+    "self": "/api/profiles?page=1&limit=10",
+    "next": "/api/profiles?page=2&limit=10",
+    "prev": null
+  },
+  "data": [ ... ]
+}
+```
+
+Applies to:
+
+- `GET /api/profiles`
+- `GET /api/profiles/search`
+
+---
+
+## CSV Export
+
+`GET /api/profiles/export?format=csv`
+
+- Applies the same filters and sorting as `GET /api/profiles`.
+- Returns `text/csv` with:
+  `id, name, gender, gender_probability, age, age_group, country_id, country_name, country_probability, created_at`
+
+---
+
+## Rate Limiting & Logging
+
+- **Auth endpoints (`/auth/*`)**: 10 requests/minute
+- **All other endpoints**: 60 requests/minute per user
+- Each request logs: method, endpoint, status code, response time
 
 ---
 
