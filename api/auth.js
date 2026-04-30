@@ -35,9 +35,10 @@ module.exports = async function handler(req, res) {
 
   try {
     const path = normalizePath(req.query && req.query.path);
-    const rateKey = `${req.method}:${req.url.split("?")[0]}`;
+    const clientKey = getClientKey(req);
+    const rateKey = `${req.method}:${path || req.url.split("?")[0]}`;
     const limitResult = rateLimit({
-      key: `auth:${rateKey}`,
+      key: `auth:${clientKey}:${rateKey}`,
       limit: 10,
       windowMs: 60 * 1000
     });
@@ -132,6 +133,33 @@ function methodNotAllowed(res) {
     status: "error",
     message: "Method not allowed"
   });
+}
+
+function getClientKey(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return forwarded.split(",")[0].trim();
+  }
+
+  const realIp = req.headers["x-real-ip"];
+  if (typeof realIp === "string" && realIp.trim()) {
+    return realIp.trim();
+  }
+
+  const vercelIp = req.headers["x-vercel-ip"];
+  if (typeof vercelIp === "string" && vercelIp.trim()) {
+    return vercelIp.trim();
+  }
+
+  if (req.socket && typeof req.socket.remoteAddress === "string") {
+    return req.socket.remoteAddress;
+  }
+
+  if (req.connection && typeof req.connection.remoteAddress === "string") {
+    return req.connection.remoteAddress;
+  }
+
+  return "unknown";
 }
 
 function requireEnv(name) {
