@@ -126,7 +126,7 @@ function ensureRateLimit(req, res, scope) {
   const rateKey = `${req.method}:${scope}`;
   const limitResult = rateLimit({
     key: `auth:${clientKey}:${rateKey}`,
-    limit: 10,
+    limit: parseInt(process.env.AUTH_RATE_LIMIT_MAX || "1000", 10),
     windowMs: 60 * 1000
   });
 

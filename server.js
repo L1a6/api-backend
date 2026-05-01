@@ -85,7 +85,7 @@ app.options("*", (req, res) => {
 
 const authLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || "1000", 10),
   standardHeaders: true,
   legacyHeaders: false,
   message: { status: "error", message: "Too many requests" }
