@@ -100,12 +100,14 @@ function applyCors(req, res) {
   const origin = req.headers.origin;
   const allowedOrigin = WEB_APP_URL && WEB_APP_URL.trim();
 
-  if (origin && allowedOrigin && origin === allowedOrigin) {
+  if (origin) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
   } else {
     res.setHeader("Access-Control-Allow-Origin", "*");
   }
+
+  res.setHeader("Vary", "Origin");
 
   res.setHeader(
     "Access-Control-Allow-Headers",
@@ -126,7 +128,7 @@ function ensureRateLimit(req, res, scope) {
   const rateKey = `${req.method}:${scope}`;
   const limitResult = rateLimit({
     key: `auth:${clientKey}:${rateKey}`,
-    limit: parseInt(process.env.AUTH_RATE_LIMIT_MAX || "1000", 10),
+    limit: parseInt(process.env.AUTH_RATE_LIMIT_MAX || "10", 10),
     windowMs: 60 * 1000
   });
 

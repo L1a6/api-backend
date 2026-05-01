@@ -58,12 +58,14 @@ app.use((req, res, next) => {
   const origin = req.headers.origin;
   const allowedOrigin = WEB_APP_URL && WEB_APP_URL.trim();
 
-  if (origin && allowedOrigin && origin === allowedOrigin) {
+  if (origin) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Access-Control-Allow-Credentials", "true");
   } else {
     res.setHeader("Access-Control-Allow-Origin", "*");
   }
+
+  res.setHeader("Vary", "Origin");
 
   res.setHeader(
     "Access-Control-Allow-Headers",
@@ -85,7 +87,7 @@ app.options("*", (req, res) => {
 
 const authLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || "1000", 10),
+  max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || "10", 10),
   standardHeaders: true,
   legacyHeaders: false,
   message: { status: "error", message: "Too many requests" }
